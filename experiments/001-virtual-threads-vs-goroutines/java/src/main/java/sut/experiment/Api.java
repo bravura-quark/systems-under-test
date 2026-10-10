@@ -8,6 +8,7 @@ import java.time.Duration;
 
 final class Api {
     static final int MAX_DELAY_MS = 5_000;
+    static final int MAX_FANOUT_BRANCHES = 16;
     static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(2);
 
     private Api() {}
@@ -28,6 +29,22 @@ final class Api {
             throw new IllegalArgumentException("delay must be between 0 and " + MAX_DELAY_MS + " ms");
         }
         return delay;
+    }
+
+    static int parseBranches(String rawBranches) {
+        if (rawBranches == null || rawBranches.isBlank()) {
+            throw new IllegalArgumentException("branches is required");
+        }
+        final int branches;
+        try {
+            branches = Integer.parseInt(rawBranches);
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("branches must be an integer", exception);
+        }
+        if (branches < 1 || branches > MAX_FANOUT_BRANCHES) {
+            throw new IllegalArgumentException("branches must be between 1 and " + MAX_FANOUT_BRANCHES);
+        }
+        return branches;
     }
 
     static Response health() {

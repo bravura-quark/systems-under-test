@@ -7,6 +7,10 @@ import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class Server {
     private Server() {}
@@ -23,6 +27,7 @@ public final class Server {
         server.createContext("/health", Server::health);
         server.createContext("/io", Server::io);
         server.createContext("/downstream", exchange -> downstream(exchange, downstreamClient));
+        server.createContext("/fanout", exchange -> fanout(exchange, downstreamClient));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             server.stop(0);
@@ -117,6 +122,74 @@ public final class Server {
             Api.write(exchange, Api.badGateway(delayMs));
         } finally {
             exchange.close();
+        }
+    }
+
+    static void fanout(HttpExchange exchange, DownstreamClient client) throws IOException {
+        if (!"GET".equals(exchange.getRequestMethod())) {
+            try {
+                Api.write(exchange, new Api.Response(405, "{\"error\":\"method not allowed\"}"));
+            } finally {
+                exchange.close();
+            }
+            return;
+        }
+
+        int delayMs;
+        int branches;
+        try {
+            delayMs = Api.parseDelay(Api.queryValue(exchange.getRequestURI().getRawQuery(), "delay"));
+            branches = Api.parseBranches(Api.queryValue(exchange.getRequestURI().getRawQuery(), "branches"));
+        } catch (IllegalArgumentException exception) {
+            try {
+                Api.write(exchange, Api.badRequest(exception.getMessage()));
+            } finally {
+                exchange.close();
+            }
+            return;
+        }
+
+        ExecutorService branchExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        List<Future<DownstreamClient.Result>> futures = new ArrayList<>(branches);
+        boolean successful = true;
+        try {
+            for (int branch = 0; branch < branches; branch++) {
+                futures.add(branchExecutor.submit(() -> client.fetch(delayMs)));
+            }
+            for (Future<DownstreamClient.Result> future : futures) {
+                DownstreamClient.Result result = future.get();
+                if (result.statusCode() < 200 || result.statusCode() >= 300) {
+                    successful = false;
+                    break;
+                }
+            }
+        } catch (InterruptedException interrupted) {
+            successful = false;
+            cancelAll(futures);
+            branchExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+            return;
+        } catch (ExecutionException | RuntimeException failure) {
+            successful = false;
+        } finally {
+            if (!successful) {
+                cancelAll(futures);
+                branchExecutor.shutdownNow();
+            } else {
+                branchExecutor.shutdown();
+            }
+        }
+
+        try {
+            Api.write(exchange, successful ? Api.ioSuccess(delayMs) : Api.badGateway(delayMs));
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private static void cancelAll(List<? extends Future<?>> futures) {
+        for (Future<?> future : futures) {
+            future.cancel(true);
         }
     }
 

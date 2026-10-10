@@ -24,6 +24,15 @@ class ApiTest {
     }
 
     @Test
+    void rejectsMissingMalformedAndOutOfRangeFanoutBranches() {
+        assertThrows(IllegalArgumentException.class, () -> Api.parseBranches(null));
+        assertThrows(IllegalArgumentException.class, () -> Api.parseBranches("not-a-number"));
+        assertThrows(IllegalArgumentException.class, () -> Api.parseBranches("0"));
+        assertThrows(IllegalArgumentException.class, () -> Api.parseBranches("17"));
+        assertEquals(4, Api.parseBranches("4"));
+    }
+
+    @Test
     void returnsStableResponseShapes() {
         assertEquals("{\"status\":\"ok\"}", Api.health().body());
         assertEquals("{\"status\":\"ok\",\"delay_ms\":50}", Api.ioSuccess(50).body());
