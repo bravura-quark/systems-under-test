@@ -22,3 +22,11 @@ services:
     cpus: "1.0"
     mem_limit: 512m
     restart: "no"
+
+  loadgen:
+    build:
+      context: .
+      dockerfile: workloads/vegeta/Dockerfile
+    cpus: "1.0"
+    mem_limit: 512m
+    restart: "no"
