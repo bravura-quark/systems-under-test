@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Write reproducibility metadata for one benchmark run.")
     parser.add_argument("--output", required=True)
     parser.add_argument("--service", required=True, choices=("java", "go"))
+    parser.add_argument("--workload", required=True)
     parser.add_argument("--target", required=True)
     parser.add_argument("--rate", required=True)
     parser.add_argument("--warmup", required=True)
@@ -34,6 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connections", required=True, type=int)
     parser.add_argument("--container-id", required=True)
     parser.add_argument("--loadgen-version", required=True)
+    parser.add_argument("--downstream-url", required=True)
+    parser.add_argument("--downstream-timeout", required=True)
     parser.add_argument("--started-at", required=True)
     parser.add_argument("--ended-at", required=True)
     return parser.parse_args()
@@ -47,7 +50,7 @@ def main() -> None:
 
     metadata = {
         "service": args.service,
-        "workload": "/io?delay=50",
+        "workload": args.workload,
         "target": args.target,
         "rate": args.rate,
         "warmup_duration": args.warmup,
@@ -61,6 +64,10 @@ def main() -> None:
         "docker_server_version": command_output("docker", "version", "--format", "{{.Server.Version}}"),
         "compose_version": command_output("docker", "compose", "version", "--short"),
         "loadgen_version": args.loadgen_version,
+        "downstream": {
+            "url": args.downstream_url,
+            "timeout": args.downstream_timeout,
+        },
         "host": {
             "hostname": socket.gethostname(),
             "platform": platform.platform(),

@@ -16,13 +16,18 @@ warmup_duration=${WARMUP_DURATION:-2s}
 duration=${DURATION:-5s}
 request_timeout=${REQUEST_TIMEOUT:-3s}
 connections=${CONNECTIONS:-100}
+workload_path=${WORKLOAD_PATH:-/io?delay=50}
+downstream_url=${DOWNSTREAM_URL:-http://downstream:8080/io}
+downstream_timeout_ms=${DOWNSTREAM_TIMEOUT_MS:-500}
+downstream_timeout="${downstream_timeout_ms}ms"
 result_root=${RESULT_ROOT:-$experiment_dir/results/raw}
-run_id=${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$(echo "$rate" | tr '/.' '__')}
+run_id=${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$(echo "$rate-$workload_path" | tr '/?.=&' '_____')}
 
-case "$service" in
-  java) target=http://java:8080/io?delay=50 ;;
-  go) target=http://go:8080/io?delay=50 ;;
-esac
+target="http://${service}:8080${workload_path}"
+compose_services=("$service")
+if [[ "$workload_path" == /downstream* ]]; then
+  compose_services+=(downstream)
+fi
 
 run_dir="$result_root/$run_id/$service"
 attack_path="$run_dir/attack.bin"
@@ -45,31 +50,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker compose up -d "$service" >/dev/null
+docker compose up -d "${compose_services[@]}" >/dev/null
 container_id=$(docker compose ps -q "$service")
 if [[ -z "$container_id" ]]; then
   echo "could not determine container ID for $service" >&2
   exit 1
 fi
 
-healthy=0
-for _ in $(seq 1 60); do
-  health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" 2>/dev/null || true)
-  if [[ "$health" == "healthy" ]]; then
-    healthy=1
-    break
-  fi
-  if [[ "$health" == "unhealthy" ]]; then
-    docker compose logs "$service" >&2 || true
+for required_service in "${compose_services[@]}"; do
+  required_container_id=$(docker compose ps -q "$required_service")
+  healthy=0
+  for _ in $(seq 1 60); do
+    health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$required_container_id" 2>/dev/null || true)
+    if [[ "$health" == "healthy" ]]; then
+      healthy=1
+      break
+    fi
+    if [[ "$health" == "unhealthy" ]]; then
+      docker compose logs "$required_service" >&2 || true
+      exit 1
+    fi
+    sleep 1
+  done
+  if [[ "$healthy" -ne 1 ]]; then
+    echo "timed out waiting for $required_service health" >&2
+    docker compose logs "$required_service" >&2 || true
     exit 1
   fi
-  sleep 1
 done
-if [[ "$healthy" -ne 1 ]]; then
-  echo "timed out waiting for $service health" >&2
-  docker compose logs "$service" >&2 || true
-  exit 1
-fi
 
 printf 'GET %s\n' "$target" |
   docker compose run --rm --no-deps -T loadgen attack \
@@ -96,6 +104,7 @@ loadgen_version=$(docker compose run --rm --no-deps -T loadgen -version | sed -n
 python3 "$script_dir/write_run_metadata.py" \
   --output "$metadata_path" \
   --service "$service" \
+  --workload "$workload_path" \
   --target "$target" \
   --rate "$rate" \
   --warmup "$warmup_duration" \
@@ -104,6 +113,8 @@ python3 "$script_dir/write_run_metadata.py" \
   --connections "$connections" \
   --container-id "$container_id" \
   --loadgen-version "${loadgen_version:-unknown}" \
+  --downstream-url "$downstream_url" \
+  --downstream-timeout "$downstream_timeout" \
   --started-at "$started_at" \
   --ended-at "$ended_at"
 
