@@ -162,6 +162,20 @@ python3 analysis/summarize_run.py \
 
 The summary treats a response with a 2xx status as successful. Vegeta’s top-level `success` value is retained as `all_requests_succeeded`; it is a boolean, not a request count.
 
+## Opt-in profiling
+
+Profiling is deliberately separate from ordinary comparison runs because the profilers add observer overhead. Run a short capture into an external directory:
+
+```sh
+PROFILE_ROOT=/tmp/sut-profile-java PROFILE_SECONDS=10 RATE=100/s \
+  scripts/profile_service.sh java
+
+PROFILE_ROOT=/tmp/sut-profile-go PROFILE_SECONDS=10 RATE=100/s \
+  scripts/profile_service.sh go
+```
+
+The Java run writes a Flight Recorder file and attack stream. The Go run writes CPU, heap, goroutine/trace diagnostics and attack streams. Go diagnostics are served on the separate opt-in port 6060 and include `net/http/pprof` plus `runtime/trace`. These artifacts are explanatory evidence, not benchmark results; keep them outside Git and record the exact workload, rate, profile duration, image IDs, and source commit alongside any published analysis.
+
 ## Run language-level tests
 
 Go can be tested directly when Go 1.26 is installed:

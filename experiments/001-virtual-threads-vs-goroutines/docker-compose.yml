@@ -7,9 +7,11 @@ services:
       PORT: "8080"
       DOWNSTREAM_URL: "${DOWNSTREAM_URL:-http://downstream:8080/io}"
       DOWNSTREAM_TIMEOUT_MS: "${DOWNSTREAM_TIMEOUT_MS:-500}"
-      JAVA_TOOL_OPTIONS: "-Djdk.httpclient.connectionPoolSize=100 -Djdk.httpclient.keepalive.timeout=30"
+      JAVA_TOOL_OPTIONS: "-Djdk.httpclient.connectionPoolSize=100 -Djdk.httpclient.keepalive.timeout=30 ${JAVA_JFR_OPTIONS:-}"
     ports:
       - "8081:8080"
+    volumes:
+      - "${PROFILE_HOST_DIR:-/tmp/sut-profiles}:/profiles"
     cpus: "1.0"
     mem_limit: 512m
     restart: "no"
@@ -22,8 +24,10 @@ services:
       PORT: "8080"
       DOWNSTREAM_URL: "${DOWNSTREAM_URL:-http://downstream:8080/io}"
       DOWNSTREAM_TIMEOUT_MS: "${DOWNSTREAM_TIMEOUT_MS:-500}"
+      PPROF_ADDR: "${PPROF_ADDR:-}"
     ports:
       - "8082:8080"
+      - "6060:6060"
     cpus: "1.0"
     mem_limit: 512m
     restart: "no"
