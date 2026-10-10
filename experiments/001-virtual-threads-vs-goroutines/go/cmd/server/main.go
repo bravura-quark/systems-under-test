@@ -17,8 +17,13 @@ import (
 func main() {
 	port := envInt("PORT", 8080)
 	httpServer := &http.Server{
-		Addr:              ":" + strconv.Itoa(port),
-		Handler:           server.NewHandler(server.Config{RequestTimeout: 2 * time.Second, MaxDelay: 5000}),
+		Addr: ":" + strconv.Itoa(port),
+		Handler: server.NewHandler(server.Config{
+			RequestTimeout:    2 * time.Second,
+			MaxDelay:          5000,
+			DownstreamURL:     envString("DOWNSTREAM_URL", "http://downstream:8080/io"),
+			DownstreamTimeout: time.Duration(envInt("DOWNSTREAM_TIMEOUT_MS", 500)) * time.Millisecond,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		WriteTimeout:      3 * time.Second,
@@ -52,4 +57,12 @@ func envInt(name string, defaultValue int) int {
 		log.Fatalf("%s must be an integer: %v", name, err)
 	}
 	return parsed
+}
+
+func envString(name string, defaultValue string) string {
+	value := os.Getenv(name)
+	if value == "" {
+		return defaultValue
+	}
+	return value
 }

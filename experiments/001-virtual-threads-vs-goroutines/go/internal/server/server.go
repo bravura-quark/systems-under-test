@@ -3,19 +3,24 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	RequestTimeout time.Duration
-	MaxDelay       int
+	RequestTimeout    time.Duration
+	MaxDelay          int
+	DownstreamURL     string
+	DownstreamTimeout time.Duration
 }
 
 type Handler struct {
-	config Config
+	config           Config
+	downstreamClient *http.Client
 }
 
 func NewHandler(config Config) http.Handler {
@@ -25,7 +30,25 @@ func NewHandler(config Config) http.Handler {
 	if config.MaxDelay <= 0 {
 		config.MaxDelay = 5000
 	}
-	return &Handler{config: config}
+	if config.DownstreamURL == "" {
+		config.DownstreamURL = "http://downstream:8080/io"
+	}
+	if config.DownstreamTimeout <= 0 {
+		config.DownstreamTimeout = 500 * time.Millisecond
+	}
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     30 * time.Second,
+		ForceAttemptHTTP2:   false,
+	}
+	return &Handler{
+		config: config,
+		downstreamClient: &http.Client{
+			Transport: transport,
+			Timeout:   config.DownstreamTimeout,
+		},
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -34,9 +57,64 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleHealth(w, r)
 	case "/io":
 		h.handleIO(w, r)
+	case "/downstream":
+		h.handleDownstream(w, r)
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
+}
+
+func (h *Handler) handleDownstream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	delay, err := parseDelay(r.URL.Query().Get("delay"), h.config.MaxDelay)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	target, err := downstreamTarget(h.config.DownstreamURL, delay)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"status": "bad_gateway", "delay_ms": delay})
+		return
+	}
+	requestContext, cancel := context.WithTimeout(r.Context(), h.config.RequestTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestContext, http.MethodGet, target, nil)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"status": "bad_gateway", "delay_ms": delay})
+		return
+	}
+
+	response, err := h.downstreamClient.Do(request)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]any{"status": "bad_gateway", "delay_ms": delay})
+		return
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"status": "bad_gateway", "delay_ms": delay})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "delay_ms": delay})
+}
+
+func downstreamTarget(base string, delay int) (string, error) {
+	target, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	query := target.Query()
+	query.Set("delay", strconv.Itoa(delay))
+	target.RawQuery = query.Encode()
+	return target.String(), nil
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {

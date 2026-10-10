@@ -75,3 +75,114 @@ func TestIOTimeoutReturnsGatewayTimeout(t *testing.T) {
 		t.Fatalf("timeout status = %d, body = %q", response.Code, response.Body.String())
 	}
 }
+
+func TestDownstreamSuccessPreservesResponseContract(t *testing.T) {
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/io" || r.URL.Query().Get("delay") != "50" {
+			t.Errorf("downstream request = %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok","delay_ms":50}`))
+	}))
+	defer downstream.Close()
+
+	handler := NewHandler(Config{
+		RequestTimeout:    2 * time.Second,
+		MaxDelay:          5000,
+		DownstreamURL:     downstream.URL + "/io",
+		DownstreamTimeout: 500 * time.Millisecond,
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/downstream?delay=50", nil))
+
+	var payload struct {
+		Status  string `json:"status"`
+		DelayMS int    `json:"delay_ms"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Code != http.StatusOK || payload.Status != "ok" || payload.DelayMS != 50 {
+		t.Fatalf("response = %d %q, want successful downstream contract", response.Code, response.Body.String())
+	}
+}
+
+func TestDownstreamNonSuccessReturnsBadGateway(t *testing.T) {
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer downstream.Close()
+
+	handler := NewHandler(Config{DownstreamURL: downstream.URL + "/io"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/downstream?delay=50", nil))
+
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadGateway)
+	}
+}
+
+func TestDownstreamTimeoutReturnsBadGateway(t *testing.T) {
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer downstream.Close()
+
+	handler := NewHandler(Config{
+		DownstreamURL:     downstream.URL + "/io",
+		DownstreamTimeout: 10 * time.Millisecond,
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/downstream?delay=50", nil))
+
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadGateway)
+	}
+}
+
+func TestDownstreamCancellationStopsClientRequest(t *testing.T) {
+	requestStarted := make(chan struct{})
+	downstreamCancelled := make(chan struct{})
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-r.Context().Done()
+		close(downstreamCancelled)
+	}))
+	defer downstream.Close()
+
+	handler := NewHandler(Config{
+		DownstreamURL:     downstream.URL + "/io",
+		DownstreamTimeout: time.Second,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/downstream?delay=50", nil).WithContext(ctx)
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(response, request)
+		close(done)
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("downstream request did not start")
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not stop after request cancellation")
+	}
+	select {
+	case <-downstreamCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("downstream request was not cancelled")
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("body = %q, want no response after cancellation", response.Body.String())
+	}
+}
