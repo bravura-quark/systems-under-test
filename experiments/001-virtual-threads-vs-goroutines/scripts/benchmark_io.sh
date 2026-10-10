@@ -20,6 +20,8 @@ workload_path=${WORKLOAD_PATH:-/io?delay=50}
 downstream_url=${DOWNSTREAM_URL:-http://downstream:8080/io}
 downstream_timeout_ms=${DOWNSTREAM_TIMEOUT_MS:-500}
 downstream_timeout="${downstream_timeout_ms}ms"
+downstream_mode=${DOWNSTREAM_MODE:-success}
+downstream_max_in_flight=${DOWNSTREAM_MAX_IN_FLIGHT:-0}
 result_root=${RESULT_ROOT:-$experiment_dir/results/raw}
 run_id=${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$(echo "$rate-$workload_path" | tr '/?.=&' '_____')}
 
@@ -115,6 +117,8 @@ python3 "$script_dir/write_run_metadata.py" \
   --loadgen-version "${loadgen_version:-unknown}" \
   --downstream-url "$downstream_url" \
   --downstream-timeout "$downstream_timeout" \
+  --downstream-mode "$downstream_mode" \
+  --downstream-max-in-flight "$downstream_max_in_flight" \
   --started-at "$started_at" \
   --ended-at "$ended_at"
 

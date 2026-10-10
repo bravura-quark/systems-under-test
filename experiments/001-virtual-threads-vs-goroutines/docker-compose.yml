@@ -34,6 +34,8 @@ services:
       dockerfile: infrastructure/downstream/Dockerfile
     environment:
       PORT: "8080"
+      DOWNSTREAM_MODE: "${DOWNSTREAM_MODE:-success}"
+      DOWNSTREAM_MAX_IN_FLIGHT: "${DOWNSTREAM_MAX_IN_FLIGHT:-0}"
     cpus: "0.5"
     mem_limit: 128m
     restart: "no"

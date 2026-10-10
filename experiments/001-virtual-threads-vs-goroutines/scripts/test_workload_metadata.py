@@ -40,6 +40,10 @@ def main() -> None:
             "http://downstream:8080/io",
             "--downstream-timeout",
             "500ms",
+            "--downstream-mode",
+            "error",
+            "--downstream-max-in-flight",
+            "1",
             "--started-at",
             "start",
             "--ended-at",
@@ -51,6 +55,8 @@ def main() -> None:
         assert metadata["downstream"] == {
             "url": "http://downstream:8080/io",
             "timeout": "500ms",
+            "mode": "error",
+            "max_in_flight": 1,
         }
 
 

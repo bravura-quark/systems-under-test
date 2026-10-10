@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--loadgen-version", required=True)
     parser.add_argument("--downstream-url", required=True)
     parser.add_argument("--downstream-timeout", required=True)
+    parser.add_argument("--downstream-mode", required=True)
+    parser.add_argument("--downstream-max-in-flight", required=True, type=int)
     parser.add_argument("--started-at", required=True)
     parser.add_argument("--ended-at", required=True)
     return parser.parse_args()
@@ -67,6 +69,8 @@ def main() -> None:
         "downstream": {
             "url": args.downstream_url,
             "timeout": args.downstream_timeout,
+            "mode": args.downstream_mode,
+            "max_in_flight": args.downstream_max_in_flight,
         },
         "host": {
             "hostname": socket.gethostname(),
