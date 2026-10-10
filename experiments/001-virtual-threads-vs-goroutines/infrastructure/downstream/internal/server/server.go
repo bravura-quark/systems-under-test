@@ -10,17 +10,36 @@ import (
 
 const maxDelayMS = 5000
 
-func NewHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/health":
-			handleHealth(w, r)
-		case "/io":
-			handleIO(w, r)
-		default:
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		}
-	})
+type Config struct {
+	Mode        string
+	MaxInFlight int
+}
+
+type Handler struct {
+	config   Config
+	capacity chan struct{}
+}
+
+func NewHandler(config Config) http.Handler {
+	if config.Mode == "" {
+		config.Mode = "success"
+	}
+	handler := &Handler{config: config}
+	if config.Mode == "capacity" && config.MaxInFlight > 0 {
+		handler.capacity = make(chan struct{}, config.MaxInFlight)
+	}
+	return handler
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/health":
+		handleHealth(w, r)
+	case "/io":
+		h.handleIO(w, r)
+	default:
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	}
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +50,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func handleIO(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleIO(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -41,6 +60,24 @@ func handleIO(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+
+	if h.config.Mode == "error" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "error", "delay_ms": delay})
+		return
+	}
+
+	if h.capacity != nil {
+		select {
+		case h.capacity <- struct{}{}:
+			defer func() { <-h.capacity }()
+		default:
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "over_capacity", "delay_ms": delay})
+			return
+		}
+	}
+	if h.config.Mode == "slow" {
+		delay += 1000
 	}
 
 	timer := time.NewTimer(time.Duration(delay) * time.Millisecond)
