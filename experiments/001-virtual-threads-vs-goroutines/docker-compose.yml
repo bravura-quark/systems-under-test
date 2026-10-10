@@ -23,6 +23,16 @@ services:
     mem_limit: 512m
     restart: "no"
 
+  downstream:
+    build:
+      context: .
+      dockerfile: infrastructure/downstream/Dockerfile
+    environment:
+      PORT: "8080"
+    cpus: "0.5"
+    mem_limit: 128m
+    restart: "no"
+
   loadgen:
     build:
       context: .
