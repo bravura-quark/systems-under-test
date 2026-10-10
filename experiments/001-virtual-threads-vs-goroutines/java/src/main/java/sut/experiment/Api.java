@@ -42,6 +42,10 @@ final class Api {
         return new Response(504, "{\"status\":\"timeout\",\"delay_ms\":" + delayMs + "}");
     }
 
+    static Response badGateway(int delayMs) {
+        return new Response(502, "{\"status\":\"bad_gateway\",\"delay_ms\":" + delayMs + "}");
+    }
+
     static Response badRequest(String message) {
         return new Response(400, "{\"error\":\"" + message + "\"}");
     }

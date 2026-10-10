@@ -29,6 +29,8 @@ class ApiTest {
         assertEquals("{\"status\":\"ok\",\"delay_ms\":50}", Api.ioSuccess(50).body());
         assertEquals(400, Api.badRequest("invalid delay").status());
         assertTrue(Api.badRequest("invalid delay").body().contains("invalid delay"));
+        assertEquals(502, Api.badGateway(50).status());
+        assertEquals("{\"status\":\"bad_gateway\",\"delay_ms\":50}", Api.badGateway(50).body());
     }
 
     @Test
