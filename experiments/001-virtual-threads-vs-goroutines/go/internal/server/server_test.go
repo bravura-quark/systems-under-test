@@ -278,3 +278,13 @@ func TestFanoutCancellationStopsDownstreamRequests(t *testing.T) {
 		t.Fatalf("body = %q, want no response after cancellation", response.Body.String())
 	}
 }
+
+func TestDiagnosticsHandlerServesPprofIndex(t *testing.T) {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	NewDiagnosticsHandler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("pprof index status = %d, body = %q", response.Code, response.Body.String())
+	}
+}

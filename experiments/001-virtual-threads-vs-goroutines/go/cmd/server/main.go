@@ -29,6 +29,7 @@ func main() {
 		WriteTimeout:      3 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
+	var diagnosticsServer *http.Server
 
 	shutdownSignals, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -39,9 +40,23 @@ func main() {
 		if err := httpServer.Shutdown(shutdownContext); err != nil {
 			log.Printf("graceful shutdown: %v", err)
 		}
+		if diagnosticsServer != nil {
+			if err := diagnosticsServer.Shutdown(shutdownContext); err != nil {
+				log.Printf("diagnostics shutdown: %v", err)
+			}
+		}
 	}()
 
 	log.Printf("go service listening on port %d", port)
+	if diagnosticsAddr := os.Getenv("PPROF_ADDR"); diagnosticsAddr != "" {
+		diagnosticsServer = &http.Server{Addr: diagnosticsAddr, Handler: server.NewDiagnosticsHandler()}
+		go func() {
+			log.Printf("go diagnostics listening on %s", diagnosticsAddr)
+			if err := diagnosticsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("diagnostics server: %v", err)
+			}
+		}()
+	}
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
