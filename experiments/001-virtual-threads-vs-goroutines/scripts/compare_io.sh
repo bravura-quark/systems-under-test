@@ -6,7 +6,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 experiment_dir=$(cd "$script_dir/.." && pwd)
 
 rates=${RATES:-10/s,100/s,500/s,1000/s,2000/s}
-workloads=${WORKLOAD_PATHS:-/io?delay=50,/downstream?delay=50}
+workloads=${WORKLOAD_PATHS:-/io?delay=50,/downstream?delay=50,/fanout?delay=50\&branches=4}
 warmup_duration=${WARMUP_DURATION:-2s}
 duration=${DURATION:-5s}
 request_timeout=${REQUEST_TIMEOUT:-3s}
@@ -17,6 +17,7 @@ downstream_url=${DOWNSTREAM_URL:-http://downstream:8080/io}
 downstream_timeout_ms=${DOWNSTREAM_TIMEOUT_MS:-500}
 downstream_timeout="${downstream_timeout_ms}ms"
 scenarios=${SCENARIOS:-success}
+fanout_branches=${FANOUT_BRANCHES:-4}
 
 IFS=',' read -r -a rate_values <<< "$rates"
 IFS=',' read -r -a workload_values <<< "$workloads"
@@ -45,6 +46,7 @@ for repetition in $(seq 1 "$repetitions"); do
           DOWNSTREAM_TIMEOUT_MS="$downstream_timeout_ms" \
           DOWNSTREAM_MODE="$scenario" \
           DOWNSTREAM_MAX_IN_FLIGHT="$max_in_flight" \
+          FANOUT_BRANCHES="$fanout_branches" \
           WARMUP_DURATION="$warmup_duration" \
           DURATION="$duration" \
           REQUEST_TIMEOUT="$request_timeout" \

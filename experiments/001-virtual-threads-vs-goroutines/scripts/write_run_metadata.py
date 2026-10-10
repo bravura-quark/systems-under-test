@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--downstream-timeout", required=True)
     parser.add_argument("--downstream-mode", required=True)
     parser.add_argument("--downstream-max-in-flight", required=True, type=int)
+    parser.add_argument("--fanout-branches", required=True, type=int)
     parser.add_argument("--started-at", required=True)
     parser.add_argument("--ended-at", required=True)
     return parser.parse_args()
@@ -57,6 +58,7 @@ def main() -> None:
         "rate": args.rate,
         "warmup_duration": args.warmup,
         "measurement_duration": args.duration,
+        "fanout_branches": args.fanout_branches,
         "request_timeout": args.timeout,
         "connections": args.connections,
         "started_at": args.started_at,

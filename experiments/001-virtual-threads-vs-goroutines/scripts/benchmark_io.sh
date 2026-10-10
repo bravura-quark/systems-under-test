@@ -22,12 +22,13 @@ downstream_timeout_ms=${DOWNSTREAM_TIMEOUT_MS:-500}
 downstream_timeout="${downstream_timeout_ms}ms"
 downstream_mode=${DOWNSTREAM_MODE:-success}
 downstream_max_in_flight=${DOWNSTREAM_MAX_IN_FLIGHT:-0}
+fanout_branches=${FANOUT_BRANCHES:-4}
 result_root=${RESULT_ROOT:-$experiment_dir/results/raw}
 run_id=${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$(echo "$rate-$workload_path" | tr '/?.=&' '_____')}
 
 target="http://${service}:8080${workload_path}"
 compose_services=("$service")
-if [[ "$workload_path" == /downstream* ]]; then
+if [[ "$workload_path" == /downstream* || "$workload_path" == /fanout* ]]; then
   compose_services+=(downstream)
 fi
 
@@ -119,6 +120,7 @@ python3 "$script_dir/write_run_metadata.py" \
   --downstream-timeout "$downstream_timeout" \
   --downstream-mode "$downstream_mode" \
   --downstream-max-in-flight "$downstream_max_in_flight" \
+  --fanout-branches "$fanout_branches" \
   --started-at "$started_at" \
   --ended-at "$ended_at"
 

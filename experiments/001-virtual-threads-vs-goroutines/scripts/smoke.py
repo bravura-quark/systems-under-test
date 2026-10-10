@@ -42,6 +42,10 @@ def main(base_url: str, scenario: str):
             status, payload = json_body(status, headers, body)
             assert status == 200, (status, payload)
             assert payload == {"status": "ok", "delay_ms": delay}, payload
+        status, headers, body = get(base_url, "/fanout?delay=0&branches=4")
+        status, payload = json_body(status, headers, body)
+        assert status == 200, (status, payload)
+        assert payload == {"status": "ok", "delay_ms": 0}, payload
 
     if scenario in ("error", "slow"):
         delay = 50 if scenario == "error" else 0
@@ -49,6 +53,10 @@ def main(base_url: str, scenario: str):
         status, payload = json_body(status, headers, body)
         assert status == 502, (status, payload)
         assert payload == {"status": "bad_gateway", "delay_ms": delay}, payload
+        status, headers, body = get(base_url, "/fanout?delay=0&branches=4", timeout=2.0)
+        status, payload = json_body(status, headers, body)
+        assert status == 502, (status, payload)
+        assert payload == {"status": "bad_gateway", "delay_ms": 0}, payload
 
     if scenario == "capacity":
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -65,6 +73,13 @@ def main(base_url: str, scenario: str):
         status, headers, body = get(base_url, "/io" + suffix)
         status, payload = json_body(status, headers, body)
         assert status == 400, (invalid, status, payload)
+        assert "error" in payload, payload
+
+    for branches in ("", "not-a-number", "0", "17"):
+        suffix = "" if branches == "" else f"&branches={branches}"
+        status, headers, body = get(base_url, "/fanout?delay=0" + suffix)
+        status, payload = json_body(status, headers, body)
+        assert status == 400, (branches, status, payload)
         assert "error" in payload, payload
 
     status, headers, body = get(base_url, "/io?delay=5000", timeout=4.0)

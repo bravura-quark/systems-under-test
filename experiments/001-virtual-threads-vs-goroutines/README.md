@@ -1,6 +1,6 @@
 # Experiment 001: Java Virtual Threads vs Go Goroutines
 
-This experiment compares equivalent HTTP services under increasing I/O concurrency. The runnable baseline includes `/health`, a synthetic cancellable wait, a deterministic downstream HTTP workload, timeouts, containers, smoke tests, and a pinned open-loop load harness. The repository contains no checked-in benchmark results and makes no performance claims.
+This experiment compares equivalent HTTP services under increasing I/O concurrency. The runnable baseline includes `/health`, a synthetic cancellable wait, deterministic downstream and fan-out HTTP workloads, timeouts, containers, smoke tests, and a pinned open-loop load harness. The repository contains no checked-in benchmark results and makes no performance claims.
 
 ## Pinned baseline
 
@@ -57,6 +57,10 @@ The Java or Go service makes one synchronous HTTP/1.1 request to the private Com
 
 The downstream client uses a shared connection-capable client, a 500 ms request timeout, and bounded idle connection settings. In the Compose benchmark configuration, both clients use an idle connection limit of 100 per downstream host; Java receives this through `JAVA_TOOL_OPTIONS`. Incoming cancellation is propagated to the downstream request; a cancelled request does not produce a success response.
 
+### `GET /fanout?delay=<milliseconds>&branches=<count>`
+
+The Java or Go service starts one concurrent downstream HTTP request per branch and joins all branch results. `branches` must be between 1 and 16. All branches must return 2xx for the request to return the normal success payload; any downstream failure returns `502`. Request cancellation cancels the child requests and does not produce a success response. With `branches=4`, an incoming rate of `100/s` creates an effective downstream request rate of approximately `400/s`, so fan-out runs must report both rates.
+
 ## Run with Docker Compose
 
 From this directory:
@@ -100,13 +104,13 @@ CONNECTIONS=100 \
 scripts/benchmark_io.sh java
 ```
 
-Use `go` instead of `java` for the Go service. Set `WORKLOAD_PATH='/downstream?delay=50'` to exercise real downstream HTTP. The runner starts one SUT, starts the downstream dependency only for the downstream workload, waits for health checks, sends a discarded warm-up, measures at an open-loop rate, samples SUT Docker stats independently, writes raw results, and removes the service containers when finished.
+Use `go` instead of `java` for the Go service. Set `WORKLOAD_PATH='/downstream?delay=50'` or `WORKLOAD_PATH='/fanout?delay=50&branches=4'` to exercise real downstream HTTP. The runner starts one SUT, starts the downstream dependency for downstream and fan-out workloads, waits for health checks, sends a discarded warm-up, measures at an open-loop rate, samples SUT Docker stats independently, writes raw results, and removes the service containers when finished.
 
 Run the same matrix sequentially against both services:
 
 ```sh
 RESULT_ROOT=/tmp/sut-validation \
-WORKLOAD_PATHS='/io?delay=50,/downstream?delay=50' \
+WORKLOAD_PATHS='/io?delay=50,/downstream?delay=50,/fanout?delay=50&branches=4' \
 SCENARIOS=success \
 RATES=10/s,100/s,500/s,1000/s,2000/s \
 WARMUP_DURATION=2s \
@@ -115,7 +119,7 @@ REPETITIONS=1 \
 scripts/compare_io.sh
 ```
 
-For a first smoke-sized matrix, override `WORKLOAD_PATHS`, `SCENARIOS`, `RATES`, `WARMUP_DURATION`, and `DURATION`. The default scenario is `success`; non-success scenarios apply only to `/downstream` workloads. Use a fresh output directory for each experiment session.
+For a first smoke-sized matrix, override `WORKLOAD_PATHS`, `SCENARIOS`, `RATES`, `WARMUP_DURATION`, and `DURATION`. The default scenario is `success`; non-success scenarios apply to downstream-backed workloads, including `/fanout`. Use a fresh output directory for each experiment session.
 
 Run the controlled dependency scenarios with:
 
@@ -189,8 +193,8 @@ This fixed-delay baseline isolates request scheduling and bookkeeping; it is not
 
 The harness uses an open-loop request rate and runs Java and Go sequentially on the same Compose project. Vegeta runs in a separate container with its own explicit CPU and memory limits. Docker stats are sampled by a host-side process rather than by the load generator. For downstream runs, the same deterministic dependency image is used for both SUTs and its resource usage is kept separate from SUT metrics. These controls reduce, but do not eliminate, confounding from the host, Docker Desktop virtualization, network setup, scheduling, and measurement resolution.
 
-The `/io` endpoint is a synthetic interruptible wait. It is a control workload for comparing request concurrency and cancellation behavior; it must not be described as equivalent to a real downstream HTTP service or database workload. `/downstream` adds a real socket and HTTP client path, but the dependency remains deterministic and local to the Compose network; it is not a production service benchmark.
+The `/io` endpoint is a synthetic interruptible wait. It is a control workload for comparing request concurrency and cancellation behavior; it must not be described as equivalent to a real downstream HTTP service or database workload. `/downstream` adds one real socket and HTTP client path, while `/fanout` adds a controlled number of concurrent client paths; the dependency remains deterministic and local to the Compose network, so neither is a production service benchmark.
 
 ## Not measured yet
 
-The harness can now collect throughput, p50/p95/p99 latency, CPU, memory, and status outcomes for the control and downstream HTTP workloads. This increment does not establish saturation points, comparative conclusions, profiling results, fan-out, PostgreSQL, or production performance. Those belong to later, separately reproducible workload increments.
+The harness can now collect throughput, p50/p95/p99 latency, CPU, memory, and status outcomes for the control, downstream HTTP, and fan-out HTTP workloads. This increment does not establish saturation points, comparative conclusions, profiling results, PostgreSQL, or production performance. Those belong to later, separately reproducible workload increments.

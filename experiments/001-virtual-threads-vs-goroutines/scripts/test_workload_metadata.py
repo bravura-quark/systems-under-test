@@ -44,6 +44,8 @@ def main() -> None:
             "error",
             "--downstream-max-in-flight",
             "1",
+            "--fanout-branches",
+            "4",
             "--started-at",
             "start",
             "--ended-at",
@@ -52,6 +54,7 @@ def main() -> None:
         subprocess.run(command, check=True)
         metadata = json.loads(output.read_text(encoding="utf-8"))
         assert metadata["workload"] == "/downstream?delay=50"
+        assert metadata["fanout_branches"] == 4
         assert metadata["downstream"] == {
             "url": "http://downstream:8080/io",
             "timeout": "500ms",
