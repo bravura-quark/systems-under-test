@@ -1,0 +1,13 @@
+# Build outputs
+java/.gradle/
+java/build/
+go/bin/
+
+# Runtime/test artifacts
+*.log
+*.prof
+*.trace
+results/**/*.json
+results/**/*.csv
+results/**/*.txt
+
