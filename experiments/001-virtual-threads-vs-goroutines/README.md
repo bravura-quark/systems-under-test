@@ -55,7 +55,7 @@ The Java or Go service makes one synchronous HTTP/1.1 request to the private Com
 {"status":"bad_gateway","delay_ms":50}
 ```
 
-The downstream client uses a shared connection-capable client, a 500 ms request timeout, and bounded idle connection settings. Incoming cancellation is propagated to the downstream request; a cancelled request does not produce a success response.
+The downstream client uses a shared connection-capable client, a 500 ms request timeout, and bounded idle connection settings. In the Compose benchmark configuration, both clients use an idle connection limit of 100 per downstream host; Java receives this through `JAVA_TOOL_OPTIONS`. Incoming cancellation is propagated to the downstream request; a cancelled request does not produce a success response.
 
 ## Run with Docker Compose
 

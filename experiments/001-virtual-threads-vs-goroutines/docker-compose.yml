@@ -7,6 +7,7 @@ services:
       PORT: "8080"
       DOWNSTREAM_URL: "${DOWNSTREAM_URL:-http://downstream:8080/io}"
       DOWNSTREAM_TIMEOUT_MS: "${DOWNSTREAM_TIMEOUT_MS:-500}"
+      JAVA_TOOL_OPTIONS: "-Djdk.httpclient.connectionPoolSize=100 -Djdk.httpclient.keepalive.timeout=30"
     ports:
       - "8081:8080"
     cpus: "1.0"
