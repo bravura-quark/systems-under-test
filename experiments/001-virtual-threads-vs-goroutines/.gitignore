@@ -7,7 +7,4 @@ go/bin/
 *.log
 *.prof
 *.trace
-results/**/*.json
-results/**/*.csv
-results/**/*.txt
-
+scripts/__pycache__/

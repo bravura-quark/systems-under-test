@@ -1,0 +1,24 @@
+services:
+  java:
+    build:
+      context: .
+      dockerfile: java/Dockerfile
+    environment:
+      PORT: "8080"
+    ports:
+      - "8081:8080"
+    cpus: "1.0"
+    mem_limit: 512m
+    restart: "no"
+
+  go:
+    build:
+      context: .
+      dockerfile: go/Dockerfile
+    environment:
+      PORT: "8080"
+    ports:
+      - "8082:8080"
+    cpus: "1.0"
+    mem_limit: 512m
+    restart: "no"
