@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,9 +60,85 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleIO(w, r)
 	case "/downstream":
 		h.handleDownstream(w, r)
+	case "/fanout":
+		h.handleFanout(w, r)
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
+}
+
+func (h *Handler) handleFanout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	delay, err := parseDelay(r.URL.Query().Get("delay"), h.config.MaxDelay)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	branches, err := parseBranches(r.URL.Query().Get("branches"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), h.config.RequestTimeout)
+	defer cancel()
+	results := make(chan error, branches)
+	var group sync.WaitGroup
+	group.Add(branches)
+	for i := 0; i < branches; i++ {
+		go func() {
+			defer group.Done()
+			target, targetErr := downstreamTarget(h.config.DownstreamURL, delay)
+			if targetErr != nil {
+				results <- targetErr
+				cancel()
+				return
+			}
+			request, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+			if requestErr != nil {
+				results <- requestErr
+				cancel()
+				return
+			}
+			response, requestErr := h.downstreamClient.Do(request)
+			if requestErr == nil {
+				_, _ = io.Copy(io.Discard, response.Body)
+				_ = response.Body.Close()
+				if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+					requestErr = &downstreamStatusError{statusCode: response.StatusCode}
+				}
+			}
+			results <- requestErr
+			if requestErr != nil {
+				cancel()
+			}
+		}()
+	}
+	group.Wait()
+	close(results)
+
+	if r.Context().Err() != nil {
+		return
+	}
+	for branchErr := range results {
+		if branchErr != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"status": "bad_gateway", "delay_ms": delay})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "delay_ms": delay})
+}
+
+type downstreamStatusError struct {
+	statusCode int
+}
+
+func (e *downstreamStatusError) Error() string {
+	return "downstream returned status " + strconv.Itoa(e.statusCode)
 }
 
 func (h *Handler) handleDownstream(w http.ResponseWriter, r *http.Request) {
@@ -169,8 +246,30 @@ func parseDelay(raw string, maxDelay int) (int, error) {
 	return delay, nil
 }
 
+func parseBranches(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, &invalidBranchesError{"branches is required"}
+	}
+	branches, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, &invalidBranchesError{"branches must be an integer"}
+	}
+	if branches < 1 || branches > 16 {
+		return 0, &invalidBranchesError{"branches must be between 1 and 16"}
+	}
+	return branches, nil
+}
+
 type invalidDelayError struct {
 	message string
+}
+
+type invalidBranchesError struct {
+	message string
+}
+
+func (e *invalidBranchesError) Error() string {
+	return e.message
 }
 
 func (e *invalidDelayError) Error() string {

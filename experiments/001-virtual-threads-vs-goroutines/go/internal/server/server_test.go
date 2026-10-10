@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -181,6 +182,97 @@ func TestDownstreamCancellationStopsClientRequest(t *testing.T) {
 	case <-downstreamCancelled:
 	case <-time.After(time.Second):
 		t.Fatal("downstream request was not cancelled")
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("body = %q, want no response after cancellation", response.Body.String())
+	}
+}
+
+func TestFanoutMakesOneDownstreamRequestPerBranch(t *testing.T) {
+	var requests atomic.Int32
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Path != "/io" || r.URL.Query().Get("delay") != "50" {
+			t.Errorf("downstream request = %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer downstream.Close()
+
+	handler := NewHandler(Config{DownstreamURL: downstream.URL + "/io"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/fanout?delay=50&branches=4", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", response.Code, response.Body.String())
+	}
+	if got := requests.Load(); got != 4 {
+		t.Fatalf("downstream requests = %d, want 4", got)
+	}
+}
+
+func TestFanoutRejectsInvalidBranchCounts(t *testing.T) {
+	handler := NewHandler(Config{})
+	for _, branches := range []string{"", "0", "17", "not-a-number"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/fanout?delay=50&branches="+branches, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("branches=%q status = %d, want %d", branches, response.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestFanoutDownstreamFailureReturnsBadGateway(t *testing.T) {
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer downstream.Close()
+
+	handler := NewHandler(Config{DownstreamURL: downstream.URL + "/io"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/fanout?delay=50&branches=4", nil))
+
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadGateway)
+	}
+}
+
+func TestFanoutCancellationStopsDownstreamRequests(t *testing.T) {
+	started := make(chan struct{}, 4)
+	cancelled := make(chan struct{}, 4)
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		<-r.Context().Done()
+		cancelled <- struct{}{}
+	}))
+	defer downstream.Close()
+
+	handler := NewHandler(Config{DownstreamURL: downstream.URL + "/io", DownstreamTimeout: time.Second})
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/fanout?delay=50&branches=4", nil).WithContext(ctx)
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(response, request)
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("fanout downstream request did not start")
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("fanout handler did not stop after request cancellation")
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("fanout downstream request was not cancelled")
 	}
 	if response.Body.Len() != 0 {
 		t.Fatalf("body = %q, want no response after cancellation", response.Body.String())
