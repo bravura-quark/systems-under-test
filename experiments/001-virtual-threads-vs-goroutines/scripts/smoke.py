@@ -35,6 +35,17 @@ def main(base_url: str):
         assert status == 200, (status, payload)
         assert payload == {"status": "ok", "delay_ms": delay}, payload
 
+    for delay in (0, 50):
+        status, headers, body = get(base_url, f"/downstream?delay={delay}")
+        status, payload = json_body(status, headers, body)
+        assert status == 200, (status, payload)
+        assert payload == {"status": "ok", "delay_ms": delay}, payload
+
+    status, headers, body = get(base_url, "/downstream?delay=5000", timeout=2.0)
+    status, payload = json_body(status, headers, body)
+    assert status == 502, (status, payload)
+    assert payload == {"status": "bad_gateway", "delay_ms": 5000}, payload
+
     for invalid in ("", "not-a-number", "-1", "5001"):
         suffix = "" if invalid == "" else f"?delay={invalid}"
         status, headers, body = get(base_url, "/io" + suffix)

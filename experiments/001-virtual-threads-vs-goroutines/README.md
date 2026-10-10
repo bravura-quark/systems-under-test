@@ -1,6 +1,6 @@
 # Experiment 001: Java Virtual Threads vs Go Goroutines
 
-This experiment compares equivalent HTTP services under increasing I/O concurrency. The runnable baseline includes `/health`, cancellable simulated I/O, timeouts, containers, smoke tests, and a pinned open-loop load harness. The repository contains no checked-in benchmark results and makes no performance claims.
+This experiment compares equivalent HTTP services under increasing I/O concurrency. The runnable baseline includes `/health`, a synthetic cancellable wait, a deterministic downstream HTTP workload, timeouts, containers, smoke tests, and a pinned open-loop load harness. The repository contains no checked-in benchmark results and makes no performance claims.
 
 ## Pinned baseline
 
@@ -47,6 +47,16 @@ Success returns `200 application/json` with:
 
 Missing, malformed, negative, or excessive values return `400 application/json` with an error object. The wait is interruptible: Go observes `request.Context()` cancellation, and Java observes virtual-thread interruption. The server also applies a 2-second request deadline, so `delay=5000` is a valid input but is expected to time out.
 
+### `GET /downstream?delay=<milliseconds>`
+
+The Java or Go service makes one synchronous HTTP/1.1 request to the private Compose service at `http://downstream:8080/io?delay=<milliseconds>`. A successful downstream response is mapped to the same success payload as `/io`. Downstream transport failures, timeouts, and non-2xx responses return `502 application/json`:
+
+```json
+{"status":"bad_gateway","delay_ms":50}
+```
+
+The downstream client uses a shared connection-capable client, a 500 ms request timeout, and bounded idle connection settings. Incoming cancellation is propagated to the downstream request; a cancelled request does not produce a success response.
+
 ## Run with Docker Compose
 
 From this directory:
@@ -81,6 +91,7 @@ Run one short measurement. The output directory is intentionally outside the rep
 
 ```sh
 RESULT_ROOT=/tmp/sut-validation \
+WORKLOAD_PATH='/io?delay=50' \
 WARMUP_DURATION=2s \
 DURATION=5s \
 RATE=100/s \
@@ -89,12 +100,13 @@ CONNECTIONS=100 \
 scripts/benchmark_io.sh java
 ```
 
-Use `go` instead of `java` for the Go service. The runner starts one service, waits for its health check, sends a discarded warm-up, measures `/io?delay=50` at an open-loop rate, samples Docker stats independently, writes raw results, and removes the service container when finished.
+Use `go` instead of `java` for the Go service. Set `WORKLOAD_PATH='/downstream?delay=50'` to exercise real downstream HTTP. The runner starts one SUT, starts the downstream dependency only for the downstream workload, waits for health checks, sends a discarded warm-up, measures at an open-loop rate, samples SUT Docker stats independently, writes raw results, and removes the service containers when finished.
 
 Run the same matrix sequentially against both services:
 
 ```sh
 RESULT_ROOT=/tmp/sut-validation \
+WORKLOAD_PATHS='/io?delay=50,/downstream?delay=50' \
 RATES=10/s,100/s,500/s,1000/s,2000/s \
 WARMUP_DURATION=2s \
 DURATION=5s \
@@ -102,7 +114,7 @@ REPETITIONS=1 \
 scripts/compare_io.sh
 ```
 
-For a first smoke-sized matrix, override `RATES`, `WARMUP_DURATION`, and `DURATION`. Use a fresh output directory for each experiment session.
+For a first smoke-sized matrix, override `WORKLOAD_PATHS`, `RATES`, `WARMUP_DURATION`, and `DURATION`. Use a fresh output directory for each experiment session. The default matrix now runs both the synthetic control and downstream HTTP workload.
 
 Each run is stored as `<result-root>/<run-id>/<service>/`:
 
@@ -153,10 +165,10 @@ Each Go HTTP request already runs in its own runtime-managed goroutine. The `/io
 
 This fixed-delay baseline isolates request scheduling and bookkeeping; it is not a real downstream network benchmark. Later runs must control warm-up, connection reuse, load-generator CPU, container CPU/memory, file-descriptor limits, JVM JIT/GC behavior, Go toolchain/runtime version, sample counts, and coordinated omission. Raw results and environment metadata must accompany any published finding.
 
-The harness uses an open-loop request rate and runs Java and Go sequentially on the same Compose project. Vegeta runs in a separate container with its own explicit CPU and memory limits. Docker stats are sampled by a host-side process rather than by the load generator. These controls reduce, but do not eliminate, confounding from the host, Docker Desktop virtualization, network setup, scheduling, and measurement resolution.
+The harness uses an open-loop request rate and runs Java and Go sequentially on the same Compose project. Vegeta runs in a separate container with its own explicit CPU and memory limits. Docker stats are sampled by a host-side process rather than by the load generator. For downstream runs, the same deterministic dependency image is used for both SUTs and its resource usage is kept separate from SUT metrics. These controls reduce, but do not eliminate, confounding from the host, Docker Desktop virtualization, network setup, scheduling, and measurement resolution.
 
-The `/io` endpoint is a synthetic interruptible wait. It is a control workload for comparing request concurrency and cancellation behavior; it must not be described as equivalent to a real downstream HTTP service or database workload.
+The `/io` endpoint is a synthetic interruptible wait. It is a control workload for comparing request concurrency and cancellation behavior; it must not be described as equivalent to a real downstream HTTP service or database workload. `/downstream` adds a real socket and HTTP client path, but the dependency remains deterministic and local to the Compose network; it is not a production service benchmark.
 
 ## Not measured yet
 
-The harness can now collect throughput, p50/p95/p99 latency, CPU, memory, and status outcomes for this control workload. This increment does not establish saturation points, comparative conclusions, profiling results, downstream HTTP, fan-out, PostgreSQL, or production performance. Those belong to later, separately reproducible workload increments.
+The harness can now collect throughput, p50/p95/p99 latency, CPU, memory, and status outcomes for the control and downstream HTTP workloads. This increment does not establish saturation points, comparative conclusions, profiling results, fan-out, PostgreSQL, or production performance. Those belong to later, separately reproducible workload increments.
