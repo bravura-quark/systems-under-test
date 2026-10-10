@@ -107,6 +107,7 @@ Run the same matrix sequentially against both services:
 ```sh
 RESULT_ROOT=/tmp/sut-validation \
 WORKLOAD_PATHS='/io?delay=50,/downstream?delay=50' \
+SCENARIOS=success \
 RATES=10/s,100/s,500/s,1000/s,2000/s \
 WARMUP_DURATION=2s \
 DURATION=5s \
@@ -114,7 +115,28 @@ REPETITIONS=1 \
 scripts/compare_io.sh
 ```
 
-For a first smoke-sized matrix, override `WORKLOAD_PATHS`, `RATES`, `WARMUP_DURATION`, and `DURATION`. Use a fresh output directory for each experiment session. The default matrix now runs both the synthetic control and downstream HTTP workload.
+For a first smoke-sized matrix, override `WORKLOAD_PATHS`, `SCENARIOS`, `RATES`, `WARMUP_DURATION`, and `DURATION`. The default scenario is `success`; non-success scenarios apply only to `/downstream` workloads. Use a fresh output directory for each experiment session.
+
+Run the controlled dependency scenarios with:
+
+```sh
+RESULT_ROOT=/tmp/sut-failure-validation \
+WORKLOAD_PATHS='/downstream?delay=50' \
+SCENARIOS=success,error,slow,capacity \
+DOWNSTREAM_MAX_IN_FLIGHT=1 \
+RATES=10/s,100/s,500/s \
+WARMUP_DURATION=2s DURATION=10s \
+scripts/compare_io.sh
+```
+
+Scenario meanings:
+
+- `success`: normal 50 ms downstream response.
+- `error`: downstream returns `503`, which the SUT maps to `502`.
+- `slow`: downstream exceeds the 500 ms client timeout, which the SUT maps to `502`.
+- `capacity`: downstream admits only the configured number of in-flight requests and rejects overflow with `503`.
+
+These modes are deterministic fault controls, not claims about a particular production dependency.
 
 Each run is stored as `<result-root>/<run-id>/<service>/`:
 
