@@ -1,74 +1,75 @@
 # Systems Under Test
 
-Reproducible experiments comparing concurrent HTTP services under controlled I/O and downstream workloads.
+A repository for reproducible technical experiments across software systems, runtimes, architectures, tools, and workloads.
 
-This repository is designed to make runtime-concurrency experiments inspectable: the services, workload contracts, container setup, load harness, tests, profiling scripts, analysis notes, and experiment requirements live together. Results are interpreted narrowly and include the controls and limitations needed to reproduce them.
+Each experiment is self-contained. Its directory contains the implementation, setup, workload definitions, tests, measurement harnesses, and experiment-specific README. The root repository provides shared organization and documentation conventions; it does not assume that every experiment has the same technology or research topic.
 
-## Current experiment
-
-Experiment 001 compares:
-
-- Java 25 virtual threads with the JDK `HttpServer` and `HttpClient`.
-- Go 1.26 goroutines with the standard-library `net/http` server and client.
-
-The workload progression is:
-
-1. A local interruptible wait.
-2. One downstream HTTP call.
-3. Four-way and wider downstream fan-out.
-4. Controlled downstream errors, timeouts, and capacity limits.
-5. Explicit request and branch admission control.
-6. Cap sweeps, runtime profiling, and delay/branch sensitivity analysis.
-
-The current evidence is workload-specific. Java performed well for simple I/O and single downstream calls, while the tested Java HTTP-client/fan-out path reached higher CPU, memory, and tail-latency pressure sooner than Go in the one-core container configuration. This is not a general ranking of Java versus Go or virtual threads versus goroutines.
-
-## Start here
-
-- [Experiment 001 README](experiments/001-virtual-threads-vs-goroutines/README.md) — setup, API contract, benchmark commands, and profiling.
-- [Experiment 001 requirements](docs/experiments/001-experiment-requirements.md) — scope, hypotheses, fairness controls, protocol, and acceptance criteria.
-- [Experiment 001 learnings](docs/experiments/001-concurrency-learnings.md) — concepts, measured findings, and interpretation limits.
-- [Experiment 001 incremental report](docs/experiments/001-incremental-report-2026-10-11.md) — cap, profiling, and sensitivity results.
-- [Experiment 002 requirements](docs/experiments/002-http-client-and-scaling-requirements.md) — proposed follow-up isolating HTTP-client behavior and CPU scaling.
-
-## Quick start
-
-Requirements:
-
-- Docker with Compose.
-- A Git checkout of this repository.
-
-From the Experiment 001 directory:
-
-```sh
-cd experiments/001-virtual-threads-vs-goroutines
-docker compose build java go loadgen
-docker compose up -d java
-scripts/smoke.sh java
-docker compose down
-```
-
-Run Go by replacing `java` with `go`. The pinned load generator is Vegeta 12.13.0, built with Go 1.26.0. Java uses Gradle 9.8.1 through the wrapper, and the services are built for Java 25 and Go 1.26.0.
-
-## Repository layout
+## Repository organization
 
 ```text
-docs/                     Experiment requirements, plans, and learning records
-experiments/001-.../      Runnable Java and Go services and benchmark harness
-  java/                   Java 25 service and tests
-  go/                     Go 1.26 service and tests
-  infrastructure/         Deterministic downstream dependency and healthcheck
-  scripts/                Smoke tests, benchmark orchestration, profiling, analysis
-  workloads/              Workload notes and load-generator image
+docs/                         Cross-experiment plans and supporting documents
+experiments/<experiment>/     One self-contained experiment per directory
 ```
 
-Raw benchmark streams, Docker statistics, profiles, and host-specific reports are intentionally kept outside Git. Each run records source revision, image identity, tool versions, workload, timing, admission caps, and host metadata so results can be audited without treating generated artifacts as source code.
+An experiment may contain any of the following, as appropriate:
 
-## Scope and interpretation
+```text
+README.md                     Experiment-specific scope, setup, and findings
+requirements or design docs   Questions, hypotheses, controls, and acceptance criteria
+source directories            Systems, services, tools, or configurations under test
+workloads/                    Inputs, scenarios, fixtures, and load definitions
+scripts/                      Reproduction, validation, measurement, and analysis tools
+infrastructure/               Containers, dependencies, and environment setup
+analysis/                     Derived analysis code and report templates
+results/                      Lightweight placeholders; large raw artifacts stay external
+```
 
-The benchmark uses a deterministic downstream service local to the Compose network and an open-loop offered load. `/io` is a synthetic interruptible wait; `/downstream` adds one real HTTP client path; `/fanout` adds multiple concurrent client paths. These workloads isolate useful mechanisms, but they are not production database, network, or maximum-throughput benchmarks.
+## Experiment catalog
 
-The experiment uses symmetric `FANOUT_MAX_IN_FLIGHT` and `FANOUT_MAX_BRANCHES_IN_FLIGHT` controls. A 503 response caused by an exhausted cap is intentional backpressure and must be analyzed separately from transport errors, timeouts, and application failures.
+- [Experiment 001 Java Virtual Threads and Go Goroutines](experiments/001-virtual-threads-vs-goroutines/README.md)
 
-## Status
+Each experiment README is the authoritative entry point for that experiment. It should explain what is being tested, how to run it, what versions and controls are required, where artifacts are written, and how conclusions should be interpreted.
 
-Experiment 001 is complete. The next proposed increment is documented in [Experiment 002 requirements](docs/experiments/002-http-client-and-scaling-requirements.md). It would isolate Java HTTP-client variants and test one-, two-, and four-CPU configurations without changing the conclusions of Experiment 001.
+## How to use this repository
+
+1. Choose an experiment under `experiments/`.
+2. Read that experiment’s README and requirements or design documents.
+3. Install the tools listed by the experiment.
+4. Run the documented validation or smoke checks before measurement.
+5. Use a fresh external directory for raw results unless the experiment explicitly says otherwise.
+6. Preserve source revisions, tool versions, environment details, workload inputs, and configuration with every measured run.
+7. Read the experiment’s analysis and interpretation notes before drawing conclusions.
+
+There is intentionally no single repository-wide benchmark command. Different experiments may require different languages, infrastructure, data, hardware, or measurement methods.
+
+## Reproducibility principles
+
+Experiments should make their variables and limits visible. Where practical, they should:
+
+- Pin relevant tool and dependency versions.
+- Separate control workloads from the behavior under study.
+- Define comparable configurations before collecting results.
+- Use tests before changing experimental implementations.
+- Preserve raw inputs and measurement artifacts without editing them.
+- Record source identity, environment, timing, and configuration metadata.
+- Repeat important measurements and report variability.
+- Distinguish observed results from explanations and hypotheses.
+- State what the experiment does not establish.
+
+Large profiles, generated reports, container statistics, and host-specific benchmark output should normally remain outside Git. The corresponding experiment documentation should describe how to reproduce them and how the raw artifacts are organized.
+
+## Adding an experiment
+
+Create a new directory under `experiments/` with a focused name and add an experiment-specific `README.md` before collecting results. At minimum, document:
+
+- Purpose and research questions.
+- Hypotheses or expected observations.
+- Systems and versions under test.
+- Workload and control variables.
+- Environment and fairness requirements.
+- Test and validation commands.
+- Measurement protocol and artifact format.
+- Analysis method and acceptance criteria.
+- Interpretation boundaries and non-goals.
+
+Cross-experiment planning material can live under `docs/`, but experiment-specific instructions and conclusions belong with the experiment they describe.
