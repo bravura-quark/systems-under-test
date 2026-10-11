@@ -1,0 +1,10 @@
+.git
+.gitignore
+java/.gradle
+java/build
+go/bin
+results
+analysis
+*.log
+*.prof
+*.trace

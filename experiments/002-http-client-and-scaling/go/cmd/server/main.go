@@ -1,0 +1,85 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"systems-under-test/experiment001/go-service/internal/server"
+)
+
+func main() {
+	port := envInt("PORT", 8080)
+	httpServer := &http.Server{
+		Addr: ":" + strconv.Itoa(port),
+		Handler: server.NewHandler(server.Config{
+			RequestTimeout:            2 * time.Second,
+			MaxDelay:                  5000,
+			DownstreamURL:             envString("DOWNSTREAM_URL", "http://downstream:8080/io"),
+			DownstreamTimeout:         time.Duration(envInt("DOWNSTREAM_TIMEOUT_MS", 500)) * time.Millisecond,
+			FanoutMaxInFlight:         envInt("FANOUT_MAX_IN_FLIGHT", 256),
+			FanoutMaxBranchesInFlight: envInt("FANOUT_MAX_BRANCHES_IN_FLIGHT", 256),
+		}),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      3 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
+	var diagnosticsServer *http.Server
+
+	shutdownSignals, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	go func() {
+		<-shutdownSignals.Done()
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownContext); err != nil {
+			log.Printf("graceful shutdown: %v", err)
+		}
+		if diagnosticsServer != nil {
+			if err := diagnosticsServer.Shutdown(shutdownContext); err != nil {
+				log.Printf("diagnostics shutdown: %v", err)
+			}
+		}
+	}()
+
+	log.Printf("go service listening on port %d", port)
+	if diagnosticsAddr := os.Getenv("PPROF_ADDR"); diagnosticsAddr != "" {
+		diagnosticsServer = &http.Server{Addr: diagnosticsAddr, Handler: server.NewDiagnosticsHandler()}
+		go func() {
+			log.Printf("go diagnostics listening on %s", diagnosticsAddr)
+			if err := diagnosticsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("diagnostics server: %v", err)
+			}
+		}()
+	}
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+}
+
+func envInt(name string, defaultValue int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		log.Fatalf("%s must be an integer: %v", name, err)
+	}
+	return parsed
+}
+
+func envString(name string, defaultValue string) string {
+	value := os.Getenv(name)
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}

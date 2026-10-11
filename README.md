@@ -27,6 +27,7 @@ results/                      Lightweight placeholders; large raw artifacts stay
 ## Experiment catalog
 
 - [Experiment 001 Java Virtual Threads and Go Goroutines](experiments/001-virtual-threads-vs-goroutines/README.md)
+- [Experiment 002 Java HTTP Client and CPU Scaling](experiments/002-http-client-and-scaling/README.md)
 
 Each experiment README is the authoritative entry point for that experiment. It should explain what is being tested, how to run it, what versions and controls are required, where artifacts are written, and how conclusions should be interpreted.
 
