@@ -9,6 +9,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,15 +24,22 @@ public final class Server {
         HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 256);
         ExecutorService executor = Executors.newThreadPerTaskExecutor(
                 Thread.ofVirtual().name("sut-java-", 0).factory());
+        ExecutorService fanoutExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        Semaphore fanoutAdmission = new Semaphore(
+                Math.max(1, environmentInt("FANOUT_MAX_IN_FLIGHT", 256)));
+        Semaphore fanoutBranchAdmission = new Semaphore(
+                Math.max(1, environmentInt("FANOUT_MAX_BRANCHES_IN_FLIGHT", 256)));
         server.setExecutor(executor);
         server.createContext("/health", Server::health);
         server.createContext("/io", Server::io);
         server.createContext("/downstream", exchange -> downstream(exchange, downstreamClient));
-        server.createContext("/fanout", exchange -> fanout(exchange, downstreamClient));
+        server.createContext("/fanout", exchange -> fanout(
+                exchange, downstreamClient, fanoutExecutor, fanoutAdmission, fanoutBranchAdmission));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             server.stop(0);
             executor.shutdownNow();
+            fanoutExecutor.shutdownNow();
         }, "sut-java-shutdown"));
 
         server.start();
@@ -126,6 +134,32 @@ public final class Server {
     }
 
     static void fanout(HttpExchange exchange, DownstreamClient client) throws IOException {
+        try (ExecutorService branchExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
+            fanout(exchange, client, branchExecutor);
+        }
+    }
+
+    static void fanout(HttpExchange exchange, DownstreamClient client, ExecutorService branchExecutor)
+            throws IOException {
+        fanout(exchange, client, branchExecutor, new Semaphore(Integer.MAX_VALUE));
+    }
+
+    static void fanout(
+            HttpExchange exchange,
+            DownstreamClient client,
+            ExecutorService branchExecutor,
+            Semaphore admission)
+            throws IOException {
+        fanout(exchange, client, branchExecutor, admission, new Semaphore(Integer.MAX_VALUE));
+    }
+
+    static void fanout(
+            HttpExchange exchange,
+            DownstreamClient client,
+            ExecutorService branchExecutor,
+            Semaphore admission,
+            Semaphore branchAdmission)
+            throws IOException {
         if (!"GET".equals(exchange.getRequestMethod())) {
             try {
                 Api.write(exchange, new Api.Response(405, "{\"error\":\"method not allowed\"}"));
@@ -149,40 +183,57 @@ public final class Server {
             return;
         }
 
-        ExecutorService branchExecutor = Executors.newVirtualThreadPerTaskExecutor();
-        List<Future<DownstreamClient.Result>> futures = new ArrayList<>(branches);
-        boolean successful = true;
-        try {
-            for (int branch = 0; branch < branches; branch++) {
-                futures.add(branchExecutor.submit(() -> client.fetch(delayMs)));
+        if (!admission.tryAcquire()) {
+            try {
+                Api.write(exchange, new Api.Response(503,
+                        "{\"status\":\"capacity\",\"delay_ms\":" + delayMs + "}"));
+            } finally {
+                exchange.close();
             }
-            for (Future<DownstreamClient.Result> future : futures) {
-                DownstreamClient.Result result = future.get();
-                if (result.statusCode() < 200 || result.statusCode() >= 300) {
-                    successful = false;
-                    break;
-                }
-            }
-        } catch (InterruptedException interrupted) {
-            successful = false;
-            cancelAll(futures);
-            branchExecutor.shutdownNow();
-            Thread.currentThread().interrupt();
             return;
-        } catch (ExecutionException | RuntimeException failure) {
-            successful = false;
-        } finally {
-            if (!successful) {
-                cancelAll(futures);
-                branchExecutor.shutdownNow();
-            } else {
-                branchExecutor.shutdown();
+        }
+
+        if (!branchAdmission.tryAcquire(branches)) {
+            admission.release();
+            try {
+                Api.write(exchange, new Api.Response(503,
+                        "{\"status\":\"capacity\",\"delay_ms\":" + delayMs + "}"));
+            } finally {
+                exchange.close();
             }
+            return;
         }
 
         try {
+            List<Future<DownstreamClient.Result>> futures = new ArrayList<>(branches);
+            boolean successful = true;
+            try {
+                for (int branch = 0; branch < branches; branch++) {
+                    futures.add(branchExecutor.submit(() -> client.fetch(delayMs)));
+                }
+                for (Future<DownstreamClient.Result> future : futures) {
+                    DownstreamClient.Result result = future.get();
+                    if (result.statusCode() < 200 || result.statusCode() >= 300) {
+                        successful = false;
+                        break;
+                    }
+                }
+            } catch (InterruptedException interrupted) {
+                successful = false;
+                cancelAll(futures);
+                Thread.currentThread().interrupt();
+                return;
+            } catch (ExecutionException | RuntimeException failure) {
+                successful = false;
+            } finally {
+                if (!successful) {
+                    cancelAll(futures);
+                }
+            }
             Api.write(exchange, successful ? Api.ioSuccess(delayMs) : Api.badGateway(delayMs));
         } finally {
+            branchAdmission.release(branches);
+            admission.release();
             exchange.close();
         }
     }

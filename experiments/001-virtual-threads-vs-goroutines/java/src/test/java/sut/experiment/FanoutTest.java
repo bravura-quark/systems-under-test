@@ -11,6 +11,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -75,6 +78,65 @@ class FanoutTest {
         service.start();
 
         assertEquals(400, request("/fanout?delay=50&branches=17").statusCode());
+    }
+
+    @Test
+    void reusesBranchExecutorAcrossRequests() throws Exception {
+        downstream.createContext("/io", exchange -> {
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        downstream.start();
+        DownstreamClient client = new DownstreamClient(endpoint(downstream, "/io"), Duration.ofSeconds(1));
+        ExecutorService branchExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        service.createContext("/fanout", exchange -> Server.fanout(exchange, client, branchExecutor));
+        service.start();
+
+        try {
+            assertEquals(200, request("/fanout?delay=50&branches=4").statusCode());
+            assertEquals(200, request("/fanout?delay=50&branches=4").statusCode());
+            assertEquals(false, branchExecutor.isShutdown());
+        } finally {
+            branchExecutor.shutdownNow();
+        }
+    }
+
+    @Test
+    void rejectsFanoutWhenAdmissionCapacityIsExhausted() throws Exception {
+        downstream.start();
+        DownstreamClient client = new DownstreamClient(endpoint(downstream, "/io"), Duration.ofSeconds(1));
+        ExecutorService branchExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        service.createContext("/fanout", exchange -> Server.fanout(
+                exchange, client, branchExecutor, new Semaphore(0)));
+        service.start();
+
+        try {
+            HttpResponse<String> response = request("/fanout?delay=50&branches=4");
+            assertEquals(503, response.statusCode());
+            assertEquals("{\"status\":\"capacity\",\"delay_ms\":50}", response.body());
+        } finally {
+            branchExecutor.shutdownNow();
+        }
+    }
+
+    @Test
+    void rejectsFanoutWhenBranchCapacityCannotFitAllBranches() throws Exception {
+        ExecutorService branchExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        service.createContext("/fanout", exchange -> Server.fanout(
+                exchange,
+                new DownstreamClient("http://127.0.0.1:1/io", Duration.ofSeconds(1)),
+                branchExecutor,
+                new Semaphore(1),
+                new Semaphore(3)));
+        service.start();
+
+        try {
+            HttpResponse<String> response = request("/fanout?delay=50&branches=4");
+            assertEquals(503, response.statusCode());
+            assertEquals("{\"status\":\"capacity\",\"delay_ms\":50}", response.body());
+        } finally {
+            branchExecutor.shutdownNow();
+        }
     }
 
     private HttpResponse<String> request(String path) throws Exception {

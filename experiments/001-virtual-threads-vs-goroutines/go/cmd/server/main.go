@@ -19,10 +19,12 @@ func main() {
 	httpServer := &http.Server{
 		Addr: ":" + strconv.Itoa(port),
 		Handler: server.NewHandler(server.Config{
-			RequestTimeout:    2 * time.Second,
-			MaxDelay:          5000,
-			DownstreamURL:     envString("DOWNSTREAM_URL", "http://downstream:8080/io"),
-			DownstreamTimeout: time.Duration(envInt("DOWNSTREAM_TIMEOUT_MS", 500)) * time.Millisecond,
+			RequestTimeout:            2 * time.Second,
+			MaxDelay:                  5000,
+			DownstreamURL:             envString("DOWNSTREAM_URL", "http://downstream:8080/io"),
+			DownstreamTimeout:         time.Duration(envInt("DOWNSTREAM_TIMEOUT_MS", 500)) * time.Millisecond,
+			FanoutMaxInFlight:         envInt("FANOUT_MAX_IN_FLIGHT", 256),
+			FanoutMaxBranchesInFlight: envInt("FANOUT_MAX_BRANCHES_IN_FLIGHT", 256),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       5 * time.Second,

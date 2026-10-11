@@ -61,6 +61,8 @@ The downstream client uses a shared connection-capable client, a 500 ms request 
 
 The Java or Go service starts one concurrent downstream HTTP request per branch and joins all branch results. `branches` must be between 1 and 16. All branches must return 2xx for the request to return the normal success payload; any downstream failure returns `502`. Request cancellation cancels the child requests and does not produce a success response. With `branches=4`, an incoming rate of `100/s` creates an effective downstream request rate of approximately `400/s`, so fan-out runs must report both rates.
 
+Fan-out admission is bounded by `FANOUT_MAX_IN_FLIGHT`, which defaults to `256` in both services. Downstream branch admission is separately bounded by `FANOUT_MAX_BRANCHES_IN_FLIGHT`, also defaulting to `256`; a request reserves all of its branches before starting downstream work. Requests rejected because either bound is exhausted return `503 application/json` with `{"status":"capacity","delay_ms":50}`. These are explicit overload-control settings and must be recorded with benchmark metadata.
+
 ## Run with Docker Compose
 
 From this directory:
@@ -104,7 +106,7 @@ CONNECTIONS=100 \
 scripts/benchmark_io.sh java
 ```
 
-Use `go` instead of `java` for the Go service. Set `WORKLOAD_PATH='/downstream?delay=50'` or `WORKLOAD_PATH='/fanout?delay=50&branches=4'` to exercise real downstream HTTP. The runner starts one SUT, starts the downstream dependency for downstream and fan-out workloads, waits for health checks, sends a discarded warm-up, measures at an open-loop rate, samples SUT Docker stats independently, writes raw results, and removes the service containers when finished.
+Use `go` instead of `java` for the Go service. Set `WORKLOAD_PATH='/downstream?delay=50'` or `WORKLOAD_PATH='/fanout?delay=50&branches=4'` to exercise real downstream HTTP. Set both `FANOUT_MAX_IN_FLIGHT` and `FANOUT_MAX_BRANCHES_IN_FLIGHT` identically for both services when comparing fan-out behavior. The runner starts one SUT, starts the downstream dependency for downstream and fan-out workloads, waits for health checks, sends a discarded warm-up, measures at an open-loop rate, samples SUT Docker stats independently, writes raw results, and removes the service containers when finished.
 
 Run the same matrix sequentially against both services:
 
@@ -209,6 +211,8 @@ The harness uses an open-loop request rate and runs Java and Go sequentially on 
 
 The `/io` endpoint is a synthetic interruptible wait. It is a control workload for comparing request concurrency and cancellation behavior; it must not be described as equivalent to a real downstream HTTP service or database workload. `/downstream` adds one real socket and HTTP client path, while `/fanout` adds a controlled number of concurrent client paths; the dependency remains deterministic and local to the Compose network, so neither is a production service benchmark.
 
-## Not measured yet
+## Experiment 001 status
 
-The harness can now collect throughput, p50/p95/p99 latency, CPU, memory, and status outcomes for the control, downstream HTTP, and fan-out HTTP workloads. This increment does not establish saturation points, comparative conclusions, profiling results, PostgreSQL, or production performance. Those belong to later, separately reproducible workload increments.
+Experiment 001 has completed its planned baseline and controlled fan-out increments. The running interpretation record is [`docs/experiments/001-concurrency-learnings.md`](../../docs/experiments/001-concurrency-learnings.md). The original reproducible comparison report and raw artifacts remain outside Git under `/tmp/sut-final-comparison.kH31xH`; the later cap sweeps, profiles, and sensitivity matrix are likewise recorded there and in that running document.
+
+The evidence supports a workload-specific conclusion: Java virtual threads handled simple I/O and a single downstream call well, but this JDK `HttpClient`/fan-out implementation reached higher CPU, memory, and tail-latency pressure sooner than Go `net/http` under the tested one-core container. This is not a general language or virtual-thread ranking. A deeper JDK HTTP-client component comparison or multi-core scaling study would be a new experiment.

@@ -1,0 +1,17 @@
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Generated build and test output
+**/.gradle/
+**/build/
+**/bin/
+**/__pycache__/
+*.log
+*.prof
+*.trace
+
+# Local benchmark output
+**/results/raw/
+results/raw/

@@ -46,6 +46,10 @@ def main() -> None:
             "1",
             "--fanout-branches",
             "4",
+            "--fanout-max-in-flight",
+            "256",
+            "--fanout-max-branches-in-flight",
+            "256",
             "--started-at",
             "start",
             "--ended-at",
@@ -55,6 +59,8 @@ def main() -> None:
         metadata = json.loads(output.read_text(encoding="utf-8"))
         assert metadata["workload"] == "/downstream?delay=50"
         assert metadata["fanout_branches"] == 4
+        assert metadata["fanout_max_in_flight"] == 256
+        assert metadata["fanout_max_branches_in_flight"] == 256
         assert metadata["downstream"] == {
             "url": "http://downstream:8080/io",
             "timeout": "500ms",

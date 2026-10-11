@@ -237,6 +237,88 @@ func TestFanoutDownstreamFailureReturnsBadGateway(t *testing.T) {
 	}
 }
 
+func TestFanoutRejectsWhenAdmissionCapacityIsExhausted(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer downstream.Close()
+
+	handler := NewHandler(Config{
+		DownstreamURL:     downstream.URL + "/io",
+		FanoutMaxInFlight: 1,
+	})
+	firstResponse := httptest.NewRecorder()
+	firstDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(firstResponse, httptest.NewRequest(
+			http.MethodGet, "/fanout?delay=50&branches=1", nil))
+		close(firstDone)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first fanout request did not start downstream work")
+	}
+
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, httptest.NewRequest(
+		http.MethodGet, "/fanout?delay=50&branches=1", nil))
+	var capacityBody struct {
+		Status  string `json:"status"`
+		DelayMS int    `json:"delay_ms"`
+	}
+	if err := json.Unmarshal(secondResponse.Body.Bytes(), &capacityBody); err != nil {
+		t.Fatalf("capacity JSON = %q: %v", secondResponse.Body.String(), err)
+	}
+	if secondResponse.Code != http.StatusServiceUnavailable || capacityBody.Status != "capacity" || capacityBody.DelayMS != 50 {
+		t.Fatalf("capacity response = %d %q", secondResponse.Code, secondResponse.Body.String())
+	}
+
+	close(release)
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("first fanout request did not finish")
+	}
+}
+
+func TestFanoutRejectsWhenBranchCapacityCannotFitAllBranches(t *testing.T) {
+	var requests atomic.Int32
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer downstream.Close()
+
+	handler := NewHandler(Config{
+		DownstreamURL:             downstream.URL + "/io",
+		FanoutMaxInFlight:         1,
+		FanoutMaxBranchesInFlight: 3,
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet, "/fanout?delay=50&branches=4", nil))
+
+	var capacityBody struct {
+		Status  string `json:"status"`
+		DelayMS int    `json:"delay_ms"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &capacityBody); err != nil {
+		t.Fatalf("capacity JSON = %q: %v", response.Body.String(), err)
+	}
+	if response.Code != http.StatusServiceUnavailable || capacityBody.Status != "capacity" || capacityBody.DelayMS != 50 {
+		t.Fatalf("capacity response = %d %q", response.Code, response.Body.String())
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("downstream requests = %d, want 0", requests.Load())
+	}
+}
+
 func TestFanoutCancellationStopsDownstreamRequests(t *testing.T) {
 	started := make(chan struct{}, 4)
 	cancelled := make(chan struct{}, 4)

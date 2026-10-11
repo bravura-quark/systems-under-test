@@ -23,6 +23,8 @@ downstream_timeout="${downstream_timeout_ms}ms"
 downstream_mode=${DOWNSTREAM_MODE:-success}
 downstream_max_in_flight=${DOWNSTREAM_MAX_IN_FLIGHT:-0}
 fanout_branches=${FANOUT_BRANCHES:-4}
+fanout_max_in_flight=${FANOUT_MAX_IN_FLIGHT:-256}
+fanout_max_branches_in_flight=${FANOUT_MAX_BRANCHES_IN_FLIGHT:-256}
 result_root=${RESULT_ROOT:-$experiment_dir/results/raw}
 run_id=${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$(echo "$rate-$workload_path" | tr '/?.=&' '_____')}
 
@@ -121,6 +123,8 @@ python3 "$script_dir/write_run_metadata.py" \
   --downstream-mode "$downstream_mode" \
   --downstream-max-in-flight "$downstream_max_in_flight" \
   --fanout-branches "$fanout_branches" \
+  --fanout-max-in-flight "$fanout_max_in_flight" \
+  --fanout-max-branches-in-flight "$fanout_max_branches_in_flight" \
   --started-at "$started_at" \
   --ended-at "$ended_at"
 

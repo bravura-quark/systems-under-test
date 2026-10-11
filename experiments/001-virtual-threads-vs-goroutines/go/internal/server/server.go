@@ -13,15 +13,19 @@ import (
 )
 
 type Config struct {
-	RequestTimeout    time.Duration
-	MaxDelay          int
-	DownstreamURL     string
-	DownstreamTimeout time.Duration
+	RequestTimeout            time.Duration
+	MaxDelay                  int
+	DownstreamURL             string
+	DownstreamTimeout         time.Duration
+	FanoutMaxInFlight         int
+	FanoutMaxBranchesInFlight int
 }
 
 type Handler struct {
 	config           Config
 	downstreamClient *http.Client
+	fanoutAdmission  chan struct{}
+	branchAdmission  chan struct{}
 }
 
 func NewHandler(config Config) http.Handler {
@@ -37,6 +41,12 @@ func NewHandler(config Config) http.Handler {
 	if config.DownstreamTimeout <= 0 {
 		config.DownstreamTimeout = 500 * time.Millisecond
 	}
+	if config.FanoutMaxInFlight <= 0 {
+		config.FanoutMaxInFlight = 256
+	}
+	if config.FanoutMaxBranchesInFlight <= 0 {
+		config.FanoutMaxBranchesInFlight = 256
+	}
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
@@ -49,6 +59,8 @@ func NewHandler(config Config) http.Handler {
 			Transport: transport,
 			Timeout:   config.DownstreamTimeout,
 		},
+		fanoutAdmission: make(chan struct{}, config.FanoutMaxInFlight),
+		branchAdmission: make(chan struct{}, config.FanoutMaxBranchesInFlight),
 	}
 }
 
@@ -83,6 +95,24 @@ func (h *Handler) handleFanout(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	select {
+	case h.fanoutAdmission <- struct{}{}:
+		defer func() { <-h.fanoutAdmission }()
+	default:
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"status":   "capacity",
+			"delay_ms": delay,
+		})
+		return
+	}
+	if !tryAcquireBranches(h.branchAdmission, branches) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"status":   "capacity",
+			"delay_ms": delay,
+		})
+		return
+	}
+	defer releaseBranches(h.branchAdmission, branches)
 
 	ctx, cancel := context.WithTimeout(r.Context(), h.config.RequestTimeout)
 	defer cancel()
@@ -131,6 +161,26 @@ func (h *Handler) handleFanout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "delay_ms": delay})
+}
+
+func tryAcquireBranches(admission chan struct{}, branches int) bool {
+	acquired := 0
+	for acquired < branches {
+		select {
+		case admission <- struct{}{}:
+			acquired++
+		default:
+			releaseBranches(admission, acquired)
+			return false
+		}
+	}
+	return true
+}
+
+func releaseBranches(admission chan struct{}, branches int) {
+	for i := 0; i < branches; i++ {
+		<-admission
+	}
 }
 
 type downstreamStatusError struct {
